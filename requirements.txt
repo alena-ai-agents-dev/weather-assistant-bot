@@ -1,0 +1,6 @@
+python-telegram-bot==20.7
+requests>=2.31
+python-dotenv>=1.0
+pycountry>=23.12
+babel>=2.14
+deep-translator>=1.11
