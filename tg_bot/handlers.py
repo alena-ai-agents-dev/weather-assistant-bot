@@ -5,10 +5,11 @@ from core.weather_service import WeatherService
 from tg_bot.keyboards import popular_keyboard, cities_keyboard, language_keyboard
 from core.constants import POPULAR_CITIES
 from tg_bot.texts import TEXT
-from tg_bot.state import get_lang, set_lang, set_cities, get_cities
+from tg_bot.state import get_lang, set_lang, set_cities, get_cities, set_state, get_state, clear_state
 from deep_translator import GoogleTranslator
 from tg_bot.utils import get_country_name
 from tg_bot.utils import weather_emoji, country_flag
+from core.errors import CityNotFound, NetworkError, TimeoutError, APIError
 
 service = WeatherService()
 
@@ -101,7 +102,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user.id
     set_lang(user, "en")
     await update.message.reply_text(
-        "Hello! Select language / Здравствуйте! Выберите язык",
+        "Hello! Please select language to continue / Здравствуйте! Пожалуйста, выберите язык, чтобы продолжить:",
         reply_markup=language_keyboard()
     )
 
@@ -109,6 +110,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user.id
     lang = get_lang(user)
+    set_state(user, "searching")
+    animation_task = None
 
     user_input = update.message.text.strip()
 
@@ -122,6 +125,7 @@ async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "en"
             )
         )
+        clear_state(user)
         return
 
     if user_input.lower() in ["russian", "русский"]:
@@ -133,7 +137,9 @@ async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ru"
             )
         )
+        clear_state(user)
         return
+
 
     try:
         searching_msg = await update.message.reply_text(
@@ -154,6 +160,7 @@ async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not cities:
             await searching_msg.edit_text(TEXT[lang]["error"])
+            clear_state(user)
             return
 
         # Remove irrelevant cities
@@ -209,10 +216,12 @@ async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not cities:
             await searching_msg.edit_text(TEXT[lang]["error"])
+            clear_state(user)
             return
 
         if len(cities) == 1:
             await show_weather(searching_msg, cities[0], lang)
+            clear_state(user)
             return
 
         set_cities(user, cities)
@@ -226,12 +235,39 @@ async def handle_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
 
+    except CityNotFound:
+        await searching_msg.edit_text(
+            TEXT[lang]["error_city_not_found"]
+        )
+        clear_state(user)
+
+    except NetworkError:
+        await searching_msg.edit_text(
+            TEXT[lang]["error_network"]
+        )
+        clear_state(user)
+
+    except TimeoutError:
+        await searching_msg.edit_text(
+            TEXT[lang]["error_timeout"]
+        )
+        clear_state(user)
+
+    except APIError:
+        await searching_msg.edit_text(
+            TEXT[lang]["error_api"]
+        )
+        clear_state(user)
+
     except Exception:
         await searching_msg.edit_text(TEXT[lang]["error"])
+        clear_state(user)
 
     finally:
-        if not animation_task.done():
+        if animation_task and not animation_task.done():
             animation_task.cancel()
+
+        clear_state(user)
 
 
 async def city_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -372,8 +408,8 @@ async def show_weather(update_or_query, city, lang, callback=False):
 
     text = (
         f"{city_name}, {country} {flag}\n\n"
-        f"{TEXT[lang]['temp']}: {temp_c:.1f}°C / {temp_f:.1f}°F\n"
-        f"{TEXT[lang]['feels']}: {feels_c:.1f}°C / {feels_f:.1f}°F\n"
+        f"{TEXT[lang]['temp']}: {int(round(temp_c))}°C / {int(round(temp_f))}°F\n"
+        f"{TEXT[lang]['feels']}: {int(round(feels_c))}°C / {int(round(feels_f))}°F\n"
         f"{TEXT[lang]['condition']}: {weather.condition} {emoji}"
     )
 
@@ -391,3 +427,21 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user.id
     lang = get_lang(user)
     await update.message.reply_text(TEXT[lang]["help"])
+
+async def weather_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user.id
+    lang = get_lang(user)
+
+    popular_objs = []
+
+    for city in POPULAR_CITIES:
+        city_list = service.search_city(city["en"])
+        if city_list:
+            popular_objs.append(city_list[0])
+
+    set_cities(user, popular_objs)
+
+    await update.message.reply_text(
+        TEXT[lang]["start"],
+        reply_markup=popular_keyboard(popular_objs, lang)
+    )

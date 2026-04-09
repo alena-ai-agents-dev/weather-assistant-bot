@@ -4,13 +4,14 @@ from dotenv import load_dotenv
 from core.models import City, Weather
 from core.errors import CityNotFound, NetworkError, TimeoutError
 from core.geonames_db import GeoNamesDB
+from core.config import Config
 
 load_dotenv()
 
 
 class WeatherService:
     def __init__(self):
-        self.api_key = os.getenv("OPENWEATHER_API_KEY")
+        self.api_key = Config.OPENWEATHER_API_KEY
         self.geo_url = "http://api.openweathermap.org/geo/1.0/direct"
         self.weather_url = "https://api.openweathermap.org/data/2.5/weather"
         self.geodb = GeoNamesDB()
@@ -24,13 +25,13 @@ class WeatherService:
                 "limit": 10,
                 "appid": self.api_key
             }
-            r = requests.get(self.geo_url, params=params, timeout=10)
+            r = requests.get(self.geo_url, params=params, timeout=Config.REQUEST_TIMEOUT)
 
             r.raise_for_status()
             data = r.json()
 
             if not data:
-                return []
+                raise CityNotFound()
 
             unique = {}
 
@@ -70,6 +71,8 @@ class WeatherService:
             raise NetworkError()
         except requests.exceptions.Timeout:
             raise TimeoutError()
+        except requests.exceptions.HTTPError:
+            raise APIError()
 
     def get_weather(self, city, lang="en"):
         try:
@@ -80,7 +83,7 @@ class WeatherService:
                 "units": "metric",
                 "lang": "ru" if lang == "ru" else "en"
             }
-            r = requests.get(self.weather_url, params=params, timeout=10)
+            r = requests.get(self.weather_url, params=params, timeout=Config.REQUEST_TIMEOUT)
             r.raise_for_status()
             data = r.json()
             return Weather(

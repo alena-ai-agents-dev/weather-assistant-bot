@@ -6,3 +6,6 @@ class NetworkError(Exception):
 
 class TimeoutError(Exception):
     pass
+
+class APIError(Exception):
+    pass
